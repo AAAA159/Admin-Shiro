@@ -169,6 +169,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <button class="nav-tab" data-sec="orders">الطلبات <span class="dot" id="ordersDot" style="display:none"></span></button>
     <button class="nav-tab" data-sec="store">المتجر</button>
     <button class="nav-tab" data-sec="logs">السجل</button>
+    <button class="nav-tab" data-sec="support">خدمة العملاء <span class="dot" id="supportAdminDot" style="display:none"></span></button>
   </div>
 </div>
 
@@ -266,6 +267,13 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <div class="panel" id="logsList"></div>
   </div>
 </section>
+<section class="section" id="sec-support">
+  <div class="wrap"><h1 class="page-title">خدمة العملاء</h1><p class="page-sub">المحادثات الجديدة تظهر أولًا بعلامة حمراء</p>
+    <div class="grid-2"><div class="panel"><div class="panel-title">المحادثات</div><div id="supportChatsList"><div style="color:var(--muted);padding:15px">جاري التحميل...</div></div></div>
+      <div class="panel"><div class="panel-title" id="supportChatTitle">اختر محادثة</div><div id="adminSupportMessages" style="min-height:220px;max-height:420px;overflow:auto;margin-bottom:12px"><div style="text-align:center;color:var(--muted);padding:20px">اختر عضوًا لعرض المحادثة</div></div><form id="adminSupportForm" style="display:none;gap:8px"><input class="form-input" id="adminSupportInput" placeholder="اكتب رد خدمة العملاء..." required><button class="btn btn-primary" style="width:auto;min-width:90px">إرسال</button></form></div>
+    </div>
+  </div>
+</section>
 
 <!-- Modals -->
 <div class="modal-overlay" id="modal-edit">
@@ -303,7 +311,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/fireba
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import {
   getFirestore, collection, getDocs, doc, getDoc, updateDoc, addDoc,
-  query, where, orderBy, limit, serverTimestamp, increment, setDoc, writeBatch, deleteDoc
+  query, where, orderBy, limit, onSnapshot, serverTimestamp, increment, setDoc, writeBatch, deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -326,6 +334,10 @@ let warnings = [];
 let logs = [];
 let rules = { deductAt: 3, deductAmt: 100, freezeAt: 5, freezeDays: 3, closeAt: 7 };
 let selUid = null;
+let supportChatsCache = [];
+let selectedSupportChat = null;
+let unsubSupportChats = null;
+let unsubAdminSupportMessages = null;
 
 function toast(msg) {
   document.getElementById('toastMsg').textContent = msg;
@@ -384,6 +396,7 @@ async function loadAll() {
   await loadProductsAdmin();
   await loadGuildAdminData();
   await loadMessagesAdmin();
+  loadSupportChatsAdmin();
   renderDeletedGuilds();
   renderAccountsAdmin();
   renderMembers();
@@ -668,7 +681,9 @@ document.getElementById('saveRulesBtn').addEventListener('click', async () => {
   toast('تم حفظ القواعد');
 });
 
-async function loadProductsAdmin(){ try { const snap=await getDocs(collection(db,'products')); const list=document.getElementById('productsAdminList'); const products=snap.docs.map(d=>({id:d.id,...d.data()})); list.innerHTML=products.map(p=>`<div class="order-row"><div><b>${p.name}</b><div class="m-meta">الفروع: ${(p.branches||[]).join('، ')||'بدون فروع'} · ${Number(p.pricePerDay||0).toLocaleString()} نقطة/يوم · ${(p.availableDays||[]).join('، ')||'كل الأيام'} · ${p.active===false?'متوقف':'نشط'}</div></div><div class="actions"><button class="btn-x" onclick="toggleProduct('${p.id}',${p.active!==false})">${p.active===false?'تفعيل':'إيقاف'}</button></div></div>`).join('')||'<div class="panel">لا توجد منتجات</div>'; } catch(e){console.error(e);} }
+async function loadProductsAdmin(){ try { const snap=await getDocs(collection(db,'products')); const list=document.getElementById('productsAdminList'); const products=snap.docs.map(d=>({id:d.id,...d.data()})); list.innerHTML=products.map(p=>`<div class="order-row"><div><b>${p.name}</b><div class="m-meta">الفروع: ${(p.branches||[]).join('، ')||'بدون فروع'} · ${Number(p.pricePerDay||0).toLocaleString()} نقطة/يوم · ${(p.availableDays||[]).join('، ')||'كل الأيام'} · ${p.active===false?'متوقف':'نشط'}</div></div><div class="actions"><button class="btn-x" onclick="editProduct('${p.id}')">تعديل</button><button class="btn-x danger" onclick="deleteProduct('${p.id}')">حذف</button><button class="btn-x" onclick="toggleProduct('${p.id}',${p.active!==false})">${p.active===false?'تفعيل':'إيقاف'}</button></div></div>`).join('')||'<div class="panel">لا توجد منتجات</div>'; } catch(e){console.error(e);} }
+window.editProduct=async function(id){const snap=await getDoc(doc(db,'products',id));if(!snap.exists())return;const p=snap.data();const name=prompt('اسم المنتج:',p.name||'');if(!name||!name.trim())return;const price=prompt('سعر اليوم:',p.pricePerDay||p.price||0);const branches=prompt('الفروع مفصولة بفاصلة:',(p.branches||[]).join(', '));if(price===null||branches===null)return;const list=branches.split(',').map(x=>x.trim()).filter(Boolean);if(!list.length){toast('يجب وجود فرع واحد على الأقل');return;}await updateDoc(doc(db,'products',id),{name:name.trim(),pricePerDay:Number(price)||0,branches:list,updatedAt:serverTimestamp()});await addLog('تعديل المنتج '+name.trim());loadProductsAdmin();toast('تم تعديل المنتج');};
+window.deleteProduct=async function(id){if(!requireDeleteCode())return;if(!confirm('حذف المنتج وفروعه؟ الطلبات القديمة ستبقى محفوظة.'))return;const snap=await getDoc(doc(db,'products',id));await deleteDoc(doc(db,'products',id));await addLog('حذف منتج '+(snap.data()?.name||id));loadProductsAdmin();toast('تم حذف المنتج');};
 window.addProductBranch=function(){const box=document.getElementById('productBranches');const input=document.createElement('input');input.className='form-input prodBranch';input.placeholder='اسم فرع أو وجهة أخرى';input.required=true;input.style.marginTop='8px';box.appendChild(input);};
 window.toggleProduct=async function(id,active){await updateDoc(doc(db,'products',id),{active:!active,updatedAt:serverTimestamp()});loadProductsAdmin();toast('تم تحديث المنتج');};
 document.getElementById('productForm')?.addEventListener('submit',async e=>{e.preventDefault();const days=[...document.querySelectorAll('input[name="prodDay"]:checked')].map(x=>x.value);const branches=[...document.querySelectorAll('.prodBranch')].map(x=>x.value.trim()).filter(Boolean);if(!branches.length){toast('أضف فرعًا واحدًا على الأقل');return;}await addDoc(collection(db,'products'),{name:document.getElementById('prodName').value.trim(),branches,description:document.getElementById('prodDesc').value.trim(),pricePerDay:Number(document.getElementById('prodPrice').value),minDays:Number(document.getElementById('prodMin').value||1),maxDays:Number(document.getElementById('prodMax').value||7),availableDays:days,active:true,createdAt:serverTimestamp()});e.target.reset();document.getElementById('productBranches').innerHTML='<input class="form-input prodBranch" placeholder="مثال: Anime Arab" required>';loadProductsAdmin();toast('تمت إضافة المنتج');});
@@ -706,6 +721,14 @@ function requireDeleteCode(){return prompt('أدخل كود تأكيد الحذ�
 window.deleteMessage=async function(id){if(!requireDeleteCode())return;if(!confirm('حذف هذه الرسالة فقط؟'))return;await deleteDoc(doc(db,'messages',id));await addLog('حذف رسالة '+id);messageRecords=messageRecords.filter(m=>m.id!==id);renderMessagesAdmin();toast('تم حذف الرسالة');};
 window.deleteOneLog=async function(id){if(!id||!requireDeleteCode())return;if(!confirm('حذف هذا السجل فقط؟'))return;await deleteDoc(doc(db,'adminLogs',id));logs=logs.filter(l=>l.id!==id);renderLogs();toast('تم حذف السجل');};
 window.deleteAllLogs=async function(){if(!requireDeleteCode())return;if(!confirm('حذف سجل الأدمن بالكامل؟'))return;const snap=await getDocs(collection(db,'adminLogs'));const batch=writeBatch(db);snap.docs.forEach(d=>batch.delete(d.ref));await batch.commit();logs=[];renderLogs();toast('تم حذف السجل بالكامل');};
+function supportEscape(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+function supportTime(v){return v?.toDate?v.toDate().toLocaleString('ar-EG'):'الآن';}
+function renderAdminSupportMessages(rows){const el=document.getElementById('adminSupportMessages');if(!el)return;el.innerHTML=rows.length?rows.map(m=>`<div style="display:flex;justify-content:${m.senderRole==='admin'?'flex-end':'flex-start'};margin:8px 0"><div style="max-width:78%;padding:9px 12px;border-radius:12px;background:${m.senderRole==='admin'?'var(--cyan-dim)':'var(--surface2)'};border:1px solid var(--border2);font-size:13px"><div>${supportEscape(m.text)}</div><small style="color:var(--muted)">${supportTime(m.createdAt)}</small></div></div>`).join(''):'<div style="text-align:center;color:var(--muted);padding:20px">لا توجد رسائل</div>';el.scrollTop=el.scrollHeight;}
+function renderSupportChatsAdmin(){const el=document.getElementById('supportChatsList');const unread=supportChatsCache.filter(c=>c.unreadForAdmin).length;const dot=document.getElementById('supportAdminDot');if(dot)dot.style.display=unread?'inline-block':'none';const list=[...supportChatsCache].sort((a,b)=>Number(b.unreadForAdmin)-Number(a.unreadForAdmin)||(b.updatedAt?.seconds||0)-(a.updatedAt?.seconds||0));el.innerHTML=list.length?list.map(c=>`<div class="member-row ${c.unreadForAdmin?'closed':''}" style="cursor:pointer" onclick="selectSupportChat('${c.id}')"><div class="m-left"><div class="m-avatar">${(c.memberName||'؟')[0]}</div><div><div class="m-name">${c.unreadForAdmin?'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--danger);margin-left:6px"></span>':''}${supportEscape(c.memberName||'عضو')}</div><div class="m-meta">${supportEscape(c.lastMessage||'لا توجد رسائل')} · ${supportTime(c.updatedAt)}</div></div></div></div>`).join(''):'<div style="color:var(--muted);padding:15px">لا توجد محادثات</div>';}
+function loadSupportChatsAdmin(){if(unsubSupportChats)unsubSupportChats();unsubSupportChats=onSnapshot(collection(db,'supportChats'),snap=>{supportChatsCache=snap.docs.map(d=>({id:d.id,...d.data()}));renderSupportChatsAdmin();},err=>{console.error('فشل تحميل محادثات الدعم:',err);});}
+window.selectSupportChat=async function(id){selectedSupportChat=supportChatsCache.find(c=>c.id===id);if(!selectedSupportChat)return;await updateDoc(doc(db,'supportChats',id),{unreadForAdmin:false});selectedSupportChat.unreadForAdmin=false;renderSupportChatsAdmin();document.getElementById('supportChatTitle').textContent='محادثة '+(selectedSupportChat.memberName||'عضو');document.getElementById('adminSupportForm').style.display='flex';if(unsubAdminSupportMessages)unsubAdminSupportMessages();unsubAdminSupportMessages=onSnapshot(collection(db,'supportChats',id,'messages'),snap=>renderAdminSupportMessages(snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))),()=>{});};
+document.getElementById('adminSupportForm')?.addEventListener('submit',async e=>{e.preventDefault();const input=document.getElementById('adminSupportInput'),text=input.value.trim();if(!text||!selectedSupportChat)return;try{await addDoc(collection(db,'supportChats',selectedSupportChat.id,'messages'),{senderId:auth.currentUser.uid,senderRole:'admin',text,createdAt:serverTimestamp(),read:false});await updateDoc(doc(db,'supportChats',selectedSupportChat.id),{unreadForAdmin:false,unreadForMember:true,lastMessage:text,lastSender:'admin',status:'open',updatedAt:serverTimestamp()});input.value='';}catch(err){console.error(err);toast('تعذر إرسال الرد');}});
+
 /* Orders */
 function renderOrders() {
   document.getElementById('ordersList').innerHTML = orders.length ? orders.map(o => `
@@ -751,7 +774,7 @@ window.approveOrder = async function(docId) {
     } else {
       await updateDoc(doc(db, 'orders', docId), { status:'approved', approvedAt:serverTimestamp(), approvedBy:auth.currentUser.uid });
     }
-    o.status='approved'; await addLog(`موافقة على ${o.orderId || docId} — ${o.nickname || ''}`); renderOrders(); showTicket(docId); toast('تمت الموافقة وتنفيذ العملية');
+    o.status='approved'; await addDoc(collection(db,'notifications'),{uid:o.uid,title:'تم قبول طلبك',body:`تمت الموافقة على الطلب ${o.orderId || docId}`,orderId:o.orderId||docId,createdAt:serverTimestamp()}); await addLog(`موافقة على ${o.orderId || docId} — ${o.nickname || ''}`); renderOrders(); showTicket(docId); toast('تمت الموافقة وتنفيذ العملية');
   } catch (e) { console.error('فشل اعتماد الطلب:', e.code, e.message); toast('تعذر اعتماد الطلب'); }
 };
 window.rejectOrder = async function(docId) {
@@ -760,7 +783,7 @@ window.rejectOrder = async function(docId) {
   const reason = prompt('سبب الرفض (اختياري):') || '';
   try {
     await updateDoc(doc(db, 'orders', docId), { status:'rejected', rejectReason:reason.trim(), rejectedAt:serverTimestamp(), rejectedBy:auth.currentUser.uid });
-    o.status='rejected'; o.rejectReason=reason.trim(); await addLog(`رفض ${o.orderId || docId}`); renderOrders(); toast('تم الرفض');
+    o.status='rejected'; o.rejectReason=reason.trim(); await addDoc(collection(db,'notifications'),{uid:o.uid,title:'تم رفض طلبك',body:reason.trim()?`سبب الرفض: ${reason.trim()}`:'تم رفض الطلب',orderId:o.orderId||docId,createdAt:serverTimestamp()}); await addLog(`رفض ${o.orderId || docId}`); renderOrders(); toast('تم الرفض');
   } catch (e) { console.error('فشل رفض الطلب:', e.code, e.message); toast('تعذر رفض الطلب'); }
 };
 
