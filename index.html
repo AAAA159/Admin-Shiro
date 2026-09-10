@@ -170,6 +170,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     <button class="nav-tab" data-sec="store">المتجر</button>
     <button class="nav-tab" data-sec="logs">السجل</button>
     <button class="nav-tab" data-sec="support">خدمة العملاء <span class="dot" id="supportAdminDot" style="display:none"></span></button>
+    <button class="nav-tab" data-sec="landing">صفحة الهبوط</button>
   </div>
 </div>
 
@@ -274,6 +275,7 @@ body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
     </div>
   </div>
 </section>
+<section class="section" id="sec-landing"><div class="wrap"><h1 class="page-title">إعدادات صفحة الهبوط</h1><p class="page-sub">تعديل الروابط والمحتوى العام — التحديث يظهر فورًا في موقع مملكة شيرو</p><div class="panel"><form id="landingSettingsForm"><div class="form-group"><label class="form-label">رابط ELYSIA للأعضاء</label><input class="form-input" id="landingElysia" type="url" required></div><div class="form-group"><label class="form-label">رابط AURORIA للنقابات الجديدة</label><input class="form-input" id="landingAuroria" type="url" required></div><div class="form-group"><label class="form-label">رابط دخول / إنشاء حساب البنك</label><input class="form-input" id="landingBankLogin" type="url" required></div><div class="form-group"><label class="form-label">رابط التعرف على البنك</label><input class="form-input" id="landingBankHome" type="url" required></div><div class="form-group"><label class="form-label">رابط تواصل معنا</label><input class="form-input" id="landingContact" type="url" required></div><div class="form-group"><label class="form-label">عنوان الصفحة</label><input class="form-input" id="landingTitle" required></div><div class="form-group"><label class="form-label">الوصف المختصر</label><textarea class="form-input" id="landingDescription" rows="3" required></textarea></div><div class="form-group"><label class="form-label">حالة البنك العامة</label><select class="form-select" id="landingBankStatus"><option value="online">Online</option><option value="maintenance">Maintenance</option><option value="offline">Offline</option></select></div><button class="btn btn-primary">حفظ إعدادات صفحة الهبوط</button></form></div><div class="panel" style="margin-top:14px;color:var(--muted);font-size:12px">يتم حفظ الإعدادات في <code>siteSettings/kingdomLanding</code>. لا تُحفظ هنا أي أرصدة أو بيانات شخصية.</div></div></section>
 
 <!-- Modals -->
 <div class="modal-overlay" id="modal-edit">
@@ -338,6 +340,7 @@ let supportChatsCache = [];
 let selectedSupportChat = null;
 let unsubSupportChats = null;
 let unsubAdminSupportMessages = null;
+const landingDefaults={elysiaUrl:'https://chat.whatsapp.com/GKgEdmHhmYXK9DI8KtaZFh?mode=gi_t',auroriaUrl:'https://chat.whatsapp.com/Bi98gHP9dId6ztxn3HbHWg?mode=gi_t',bankLoginUrl:'https://aaaa159.github.io/Sherio-Bank/login.html',bankHomeUrl:'https://aaaa159.github.io/Sherio-Bank/',contactUrl:'https://chat.whatsapp.com/IOqgRIBFZupHzSrgw6m7Xq?mode=gi_t',title:'مملكة شيرو',description:'مملكة رقمية تجمع الأعضاء والنقابات والرتب والنقاط تحت راية واحدة.',bankStatus:'online'};
 
 function toast(msg) {
   document.getElementById('toastMsg').textContent = msg;
@@ -362,6 +365,8 @@ function switchSec(id) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.sec === id));
   document.getElementById('sec-' + id).classList.add('active');
 }
+async function loadLandingSettings(){try{const snap=await getDoc(doc(db,'siteSettings','kingdomLanding'));const d={...landingDefaults,...(snap.exists()?snap.data():{})};for(const [id,key] of Object.entries({landingElysia:'elysiaUrl',landingAuroria:'auroriaUrl',landingBankLogin:'bankLoginUrl',landingBankHome:'bankHomeUrl',landingContact:'contactUrl',landingTitle:'title',landingDescription:'description',landingBankStatus:'bankStatus'})){const el=document.getElementById(id);if(el)el.value=d[key]||'';}}catch(e){console.error(e);}}
+document.getElementById('landingSettingsForm')?.addEventListener('submit',async e=>{e.preventDefault();const data={elysiaUrl:document.getElementById('landingElysia').value.trim(),auroriaUrl:document.getElementById('landingAuroria').value.trim(),bankLoginUrl:document.getElementById('landingBankLogin').value.trim(),bankHomeUrl:document.getElementById('landingBankHome').value.trim(),contactUrl:document.getElementById('landingContact').value.trim(),title:document.getElementById('landingTitle').value.trim(),description:document.getElementById('landingDescription').value.trim(),bankStatus:document.getElementById('landingBankStatus').value,updatedAt:serverTimestamp()};await setDoc(doc(db,'siteSettings','kingdomLanding'),data,{merge:true});await addLog('تعديل إعدادات صفحة الهبوط');toast('تم حفظ إعدادات صفحة الهبوط');});
 document.querySelectorAll('.nav-tab').forEach(t => t.addEventListener('click', () => switchSec(t.dataset.sec)));
 
 /* Auth */
@@ -378,6 +383,7 @@ onAuthStateChanged(auth, async (user) => {
       return;
     }
     await loadAll();
+    await loadLandingSettings();
     document.getElementById('loading').classList.add('hide');
   } catch (e) {
     console.error(e);
@@ -395,6 +401,7 @@ async function loadAll() {
   await Promise.all([loadMembers(), loadOrders(), loadWarnings(), loadRules(), loadLogs()]);
   await loadProductsAdmin();
   await loadGuildAdminData();
+  await publishLandingStats();
   await loadMessagesAdmin();
   loadSupportChatsAdmin();
   renderDeletedGuilds();
@@ -405,6 +412,12 @@ async function loadAll() {
   renderRules();
   renderLogs();
   updateStats();
+}
+
+async function publishLandingStats(){
+  const activeGuilds=guildRecords.filter(g=>g.status==='active').length;
+  const activeMembers=members.filter(m=>(m.status||'active')==='active').length;
+  await setDoc(doc(db,'publicKingdomStats','current'),{activeGuilds,totalMembers:activeMembers,bankStatus:'online',updatedAt:serverTimestamp()},{merge:true});
 }
 
 async function loadMembers() {
